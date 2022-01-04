@@ -23,7 +23,7 @@ library(treemap)
 
 
 
-# Get Data
+#----- Get Data
 
 
 
@@ -204,7 +204,7 @@ write.csv(SSL, fileName)
 
 
 
-# Clean Data
+#----- Clean Data
 
 
 
@@ -347,7 +347,11 @@ write.csv(SSL, fileName)
 
 
 
-# Analyse Data
+
+
+#----- Analyse Data
+
+
 
 
 
@@ -566,7 +570,13 @@ summary(GLMweb_lic)
 
 
 
-# Draw Data
+
+#----- Draw Data
+
+
+
+
+
 
 ```{r treemap license}
 treemap(as.data.frame(table(SSL$license)),
