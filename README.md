@@ -1,5 +1,5 @@
 # Scientific Software Licensing
-Investigating the impact of software licensing on the dissemination of peer-reviewed scientific research\\
+Investigating the impact of software licensing on the dissemination of peer-reviewed scientific research\
 
 
 ## ScientificSoftwareLicensing.rmd 
