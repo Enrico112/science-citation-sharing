@@ -3,16 +3,16 @@ Investigating the impact of software licensing on the dissemination of peer-revi
 
 
 ## ScientificSoftwareLicensing.rmd 
-Has four sections:\
+Has four sections:
 ### 1) Get Data
 
 It downloads publication data from articles in PLOS (Public Library of Science, the first peer-reviewed Open-Science journal) that contain FOSS software license names (bsd, mit, ecl, Apache, mpl, lgpl, gpl) and as many randomly selected articles for the control group. \
-It outputs the file "PLOSdataXXXXXX.csv". (XXXXXX = file version)\
+It outputs the file "PLOSdataXXXXXX.csv". (XXXXXX = file version)
 
 ### 2) Clean Data
 
 It extracts and reorders data in "PLOSdataXXXXXX.csv".\
-It outputs the file "PLOScleanDataXXXXXX.csv". (uploaded in the repo)\
+It outputs the file "PLOScleanDataXXXXXX.csv". (uploaded in the repo)
 
 ### 3) Analyze Data
 
@@ -20,7 +20,7 @@ It runs some analyses on the clean dataset, e.g. summaries, tables, linear regre
 
 ### 4) Draw Data
 
-drawData.R draws histograms, box plots, mosaic plots\\
+drawData.R draws histograms, box plots, mosaic plots
 
 
 ## PLOScleanDataXXXXXX.csv
