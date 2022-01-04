@@ -1,0 +1,835 @@
+---
+title: "Scientific Software Licensing"
+author: "Enrico"
+date: "04/01/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+```{r libraries}
+library(rplos)
+library(rcrossref)
+library(dplyr)
+library(stringr)
+#library(Matrix)
+library(lme4)
+library(ggplot2)
+library(treemap)
+```
+
+
+
+# Get Data
+
+
+
+## Search and download publication data 
+```{r publication data}
+bsd <- searchplos(q = 'bsd', 
+                  fl = c("id",
+                         "publication_date", 
+                         "journal", 
+                         "subject", 
+                         "counter_total_all",
+                         "alm_twitterCount", 
+                         "alm_facebookCount"), 
+                  limit = 100000)
+bsd <- bsd$data
+license <- rep("BSD", length = nrow(bsd))
+bsd <- cbind(bsd, license)
+
+mit <- searchplos(q = 'mit', 
+                  fl = c("id",
+                         "publication_date", 
+                         "journal", 
+                         "subject", 
+                         "counter_total_all",
+                         "alm_twitterCount", 
+                         "alm_facebookCount"), 
+                  limit = 100000)
+mit <- mit$data
+license <- rep("MIT", length = nrow(mit))
+mit <- cbind(mit, license)
+
+ecl <- searchplos(q = 'ecl', 
+                  fl = c("id",
+                         "publication_date", 
+                         "journal", 
+                         "subject", 
+                         "counter_total_all",
+                         "alm_twitterCount", 
+                         "alm_facebookCount"), 
+                  limit = 100000)
+ecl <- ecl$data
+license <- rep("ECL", length = nrow(ecl))
+ecl <- cbind(ecl, license)
+
+# maybe ignore
+apache <- searchplos(q = 'apache', 
+                     fl = c("id",
+                            "publication_date", 
+                            "journal", 
+                            "subject", 
+                            "counter_total_all",
+                            "alm_twitterCount", 
+                            "alm_facebookCount"), 
+                     limit = 100000)
+apache <- apache$data
+license <- rep("Apache", length = nrow(apache))
+apache <- cbind(apache, license)
+
+mpl <- searchplos(q = 'mpl', 
+                  fl = c("id",
+                         "publication_date", 
+                         "journal", 
+                         "subject", 
+                         "counter_total_all",
+                         "alm_twitterCount", 
+                         "alm_facebookCount"), 
+                  limit = 100000)
+mpl <- mpl$data
+license <- rep("MPL", length = nrow(mpl))
+mpl <- cbind(mpl, license)
+
+lgpl <- searchplos(q = 'lgpl', 
+                   fl = c("id",
+                          "publication_date", 
+                          "journal", 
+                          "subject", 
+                          "counter_total_all",
+                          "alm_twitterCount", 
+                          "alm_facebookCount"), 
+                   limit = 100000)
+lgpl <- lgpl$data
+license <- rep("LGPL", length = nrow(lgpl))
+lgpl <- cbind(lgpl, license)
+
+gpl <- searchplos(q = 'gpl', 
+                  fl = c("id",
+                         "publication_date", 
+                         "journal", 
+                         "subject", 
+                         "counter_total_all",
+                         "alm_twitterCount", 
+                         "alm_facebookCount"), 
+                  limit = 100000)
+gpl <- gpl$data
+license <- rep("GPL", length = nrow(gpl))
+gpl <- cbind(gpl, license)
+
+# create main df 
+SSL <- rbind(apache, bsd, ecl, gpl, lgpl, mit, mpl)
+
+
+```
+
+## Set articles appearing in more than one search to "Hybrid FOSS"
+```{r hybrid licenses and duplicate id}
+# get index of duplicated rows
+hybridIndex <- duplicated(SSL$id)
+# get index of unique rows 
+nonHybridIndex <- !hybridIndex
+# create hybrid df with duplicated rows
+hybrid <- subset(SSL, hybridIndex)
+# remove duplicates in hybrid
+hybrid <- subset(hybrid, !duplicated(hybrid$id))
+# set license to hybrid FOSS
+hybrid$license <- "Hybrid FOSS"
+# remove duplicated rows from SSL = 29708, 0 duplicates
+SSL <- subset(SSL, nonHybridIndex)
+# bind SSL with hybrid 
+SSL<- rbind(SSL, hybrid)
+```
+
+
+## Get nonFOSS sample (n = 30,000, similar to n FOSS)
+```{r nonFOSS sample}
+nonFOSS <- data.frame()
+# 6 queries downloading 5,000 articles each. The 6 words searched for are among the most common in English to produce relatively random results
+for (word in c("when", "from", "one", "out", "about", "than")) {
+  search <- searchplos(q = word,
+                       fl = c("id",
+                              "publication_date", 
+                              "journal", 
+                              "subject", 
+                              "counter_total_all",
+                              "alm_twitterCount", 
+                              "alm_facebookCount"), 
+                       limit = 5000)  
+  nonFOSS <- rbind(nonFOSS, search$data)
+  print(word)
+}
+license <- rep("Non-FOSS", length = nrow(nonFOSS))
+nonFOSS <- cbind(nonFOSS, license)
+
+# bind SSL to nonFOSS
+SSL <- rbind(SSL, nonFOSS)
+
+# remove duplicates from bottom. In this way, eventual FOSS articles fetched by the second query are not also counted as nonFOSS)
+SSL <- distinct(SSL, id, .keep_all = TRUE)
+```
+
+## Get citation count
+```{r citation count}
+# note: downloading time may be long
+nrow_SSL <- nrow(SSL)
+citation_count <- vector(mode = "numeric", length = nrow_SSL)
+loop = 0
+for (row in 1:nrow_SSL) {
+  x <- cr_citation_count(doi = SSL[row,"id"], 
+                         url = "http://www.crossref.org/openurl/", 
+                         key = "enriconardelli11@gmail.com",
+                         async = FALSE)
+  citation_count[row] <- x[,2] # store only citation count from the second col (ignore doi in first col)
+  if (row%%20 == 0) { # print progress every 20 articles
+    print(c(row, " out of ", nrow_SSL))
+  }
+}
+print("Finished")
+SSL <- cbind(SSL, citation_count = as.vector(citation_count))
+```
+
+## Write df as csv
+```{r write csv}
+# save raw data to csv
+timeNow <- format(Sys.time(), "%y%m%d")
+fileName <- paste("PLOSdata", timeNow, ".csv", sep = "")
+write.csv(SSL, fileName)
+```
+
+
+
+
+# Clean Data
+
+
+
+
+## Load data set
+```{r load SSL}
+#fileVersion <- "210722" # manually chose file version
+#SSL <- read.csv(file = paste("PLOSdata", fileVersion, ".csv", sep = ""))
+#SSL <- subset(SSL, select = -X) # deletes extra "X" column that appears
+```
+
+## License type
+```{r license type}
+SSL$license_type <- NULL
+for (row in 1:nrow(SSL)) {
+  if (SSL$license[row] == 'Non-FOSS') SSL$license_type[row] <- "Non-FOSS"
+  else SSL$license_type[row] <- "FOSS"
+}
+```
+
+## Date
+```{r date}
+for (row in 1:nrow(SSL)) {
+  SSL$publication_date[row] <- substr(SSL$publication_date[row], 1, 10) # substring first 10 chars
+}
+
+download_date <- as.Date("2021-07-22")
+SSL$download_date <- rep(download_date, length = nrow(SSL))
+
+SSL$days_since_pub <- as.numeric(as.Date(as.character(SSL$download_date), format="%Y-%m-%d") - as.Date(as.character(SSL$publication_date), format="%Y-%m-%d"))
+
+SSL$year <- NULL
+for (row in 1:nrow(SSL)) {
+  SSL$year[row] <- substr(SSL$publication_date[row], 1, 4) # substring first 10 chars
+}
+
+```
+
+## Social media
+```{r social media posts}
+colnames(SSL)[which(names(SSL) == "alm_twitterCount")] <- "twitter_posts"
+colnames(SSL)[which(names(SSL) == "alm_facebookCount")] <- "facebook_posts"
+SSL$socialmedia_posts <- SSL$twitter_posts + SSL$facebook_posts
+
+```
+
+## Webpage visits
+```{r webpage visits}
+colnames(SSL)[which(names(SSL) == "counter_total_all")] <- "webpage_visits"
+```
+
+## Journal
+```{r journal}
+# Standardizes journal names (originally some were called 'PLoS', others 'PLOS')
+for (row in 1:nrow(SSL)) {
+  if (is.na(SSL$journal[row])) SSL$journal[row] <- "Unknown"
+  else if (SSL$journal[row] == "PLOS Biology" || SSL$journal[row] == "PLoS Biology") SSL$journal[row] <- "PLOS Biology"
+  else if (grepl("ONE", SSL$journal[row], fixed=TRUE)) SSL$journal[row] <- "PLOS ONE"    
+  else if (grepl("Medicine", SSL$journal[row], fixed=TRUE)) SSL$journal[row] <- "PLOS Medicine"
+  else if (grepl("Computational", SSL$journal[row], fixed=TRUE)) SSL$journal[row] <- "PLOS Computational Biology"
+  else if (grepl("Genetics", SSL$journal[row], fixed=TRUE)) SSL$journal[row] <- "PLOS Genetics"
+  else if (grepl("Pathogens", SSL$journal[row], fixed=TRUE)) SSL$journal[row] <- "PLOS Pathogens"
+  else if (grepl("Tropical", SSL$journal[row], fixed=TRUE)) SSL$journal[row] <- "PLOS Neglected Tropical Diseases"
+  else SSL$journal[row] <- "Other"
+}
+```
+
+## Impact factor
+```{r impact factor}
+# Add impact factor of the journal, manually sourced from wikipedia
+SSL$impact_factor <- NA
+for (row in 1:nrow(SSL)) {
+  if (SSL$journal[row] == "PLOS Biology") SSL$impact_factor[row] <- 7.076 
+  else if (SSL$journal[row] == "PLOS ONE") SSL$impact_factor[row] <- 2.740
+  else if (SSL$journal[row] == "PLOS Medicine") SSL$impact_factor[row] <- 10.500
+  else if (SSL$journal[row] == "PLOS Computational Biology") SSL$impact_factor[row] <- 4.428
+  else if (SSL$journal[row] == "PLOS Genetics") SSL$impact_factor[row] <- 5.174
+  else if (SSL$journal[row] == "PLOS Pathogens") SSL$impact_factor[row] <- 6.218
+  else if (SSL$journal[row] == "PLOS Neglected Tropical Diseases") SSL$impact_factor[row] <- 3.885
+  # add a mean value for unknonw journals
+  else SSL$impact_factor[row] <- mean(7.076, 2.740, 10.500, 4.428, 5.174, 6.218, 3.885)
+}
+```
+
+## Subject
+``` {r subject}
+# extract first subject from subject list
+SSL$main_subject <- "empty"
+for (row in 1:nrow(SSL)) {
+  if (is.na(SSL$subject[row])) {
+    SSL$main_subject[row] <- "Unknown"
+  } else if (SSL$subject[row] == "Unknown"){
+  SSL$main_subject[row] <- "Unknown"
+  } else {
+  str <- str_split(SSL$subject[row], "/", simplify = TRUE) # split string at / and simplify to matrix
+  SSL$main_subject[row] <- gsub(",$", "", str[,2]) # extract col 2 without eventual final commas
+  }
+}
+
+for (row in 1:nrow(SSL)) {
+  if (is.na(SSL$subject[row]))SSL$subject[row] <- "Unknown"
+}
+```
+
+## Remove unused columns
+``` {r remove columns}
+SSL <- subset(SSL, select = -c(facebook_posts, twitter_posts, subject, download_date)) 
+```
+
+## Reorder columns
+``` {r roerder columns}
+SSL <- SSL[c("id", 
+             "license", 
+             "license_type",
+             "citation_count",
+             "socialmedia_posts",
+             "webpage_visits",
+             "journal",
+             "impact_factor",
+             "days_since_pub",
+             "main_subject",
+             "publication_date",
+             "year")]
+``` 
+
+## Remove non complete cases
+``` {r}
+# Check NAs by column
+apply(is.na(SSL), 2, which) 
+# Remove NAs
+SSL <- na.omit(SSL)
+```
+
+## Write to csv
+``` {r write clean csv}
+# save clean data to csv
+fileName <- paste("PLOScleanData", fileVersion, ".csv", sep = "")
+write.csv(SSL, fileName)
+``` 
+
+
+
+# Analyse Data
+
+
+
+
+## Load data
+```{r load}
+#fileVersion <- "210722" # manually choose file version
+#SSL <- read.csv(file = paste("PLOScleanData", fileVersion, ".csv", sep = ""))
+#SSL <- subset(SSL, select = -X) # delete extra "X" column that appears
+```
+
+## Dataframe information
+```{r df info}
+dim(SSL)
+summary(SSL)
+```
+
+## Tables
+```{r 1D tables}
+table(SSL$license)
+prop.table(table(subset(SSL$license, SSL$license_type=="FOSS")))
+
+table(SSL$license_type)
+prop.table(table(SSL$license_type))
+
+# citation count
+summary(SSL$citation_count)
+sd(SSL$citation_count)
+summary(subset(SSL$citation_count, SSL$license_type == "FOSS"))
+sd(subset(SSL$citation_count, SSL$license_type == "FOSS"))
+summary(subset(SSL$citation_count, SSL$license_type == "Non-FOSS"))
+sd(subset(SSL$citation_count, SSL$license_type == "Non-FOSS"))
+summary(subset(SSL$citation_count, SSL$license == "Apache"))
+sd(subset(SSL$citation_count, SSL$license == "Apache"))
+summary(subset(SSL$citation_count, SSL$license == "BSD"))
+sd(subset(SSL$citation_count, SSL$license == "BSD"))
+summary(subset(SSL$citation_count, SSL$license == "ECL"))
+sd(subset(SSL$citation_count, SSL$license == "ECL"))
+summary(subset(SSL$citation_count, SSL$license == "GPL"))
+sd(subset(SSL$citation_count, SSL$license == "GPL"))
+summary(subset(SSL$citation_count, SSL$license == "LGPL"))
+sd(subset(SSL$citation_count, SSL$license == "LGPL"))
+summary(subset(SSL$citation_count, SSL$license == "MIT"))
+sd(subset(SSL$citation_count, SSL$license == "MIT"))
+summary(subset(SSL$citation_count, SSL$license == "MPL"))
+sd(subset(SSL$citation_count, SSL$license == "MPL"))
+
+# soc
+summary(SSL$socialmedia_posts)
+sd(SSL$socialmedia_posts)
+summary(subset(SSL$socialmedia_posts, SSL$license_type == "FOSS"))
+sd(subset(SSL$socialmedia_posts, SSL$license_type == "FOSS"))
+summary(subset(SSL$socialmedia_posts, SSL$license_type == "Non-FOSS"))
+sd(subset(SSL$socialmedia_posts, SSL$license_type == "Non-FOSS"))
+summary(subset(SSL$socialmedia_posts, SSL$license == "Apache"))
+sd(subset(SSL$socialmedia_posts, SSL$license == "Apache"))
+summary(subset(SSL$socialmedia_posts, SSL$license == "BSD"))
+sd(subset(SSL$socialmedia_posts, SSL$license == "BSD"))
+summary(subset(SSL$socialmedia_posts, SSL$license == "ECL"))
+sd(subset(SSL$socialmedia_posts, SSL$license == "ECL"))
+summary(subset(SSL$socialmedia_posts, SSL$license == "GPL"))
+sd(subset(SSL$socialmedia_posts, SSL$license == "GPL"))
+summary(subset(SSL$socialmedia_posts, SSL$license == "LGPL"))
+sd(subset(SSL$socialmedia_posts, SSL$license == "LGPL"))
+summary(subset(SSL$socialmedia_posts, SSL$license == "MIT"))
+sd(subset(SSL$socialmedia_posts, SSL$license == "MIT"))
+summary(subset(SSL$socialmedia_posts, SSL$license == "MPL"))
+sd(subset(SSL$socialmedia_posts, SSL$license == "MPL"))
+
+#web
+summary(SSL$webpage_visits)
+sd(SSL$webpage_visits)
+summary(subset(SSL$webpage_visits, SSL$license_type == "FOSS"))
+sd(subset(SSL$webpage_visits, SSL$license_type == "FOSS"))
+summary(subset(SSL$webpage_visits, SSL$license_type == "Non-FOSS"))
+sd(subset(SSL$webpage_visits, SSL$license_type == "Non-FOSS"))
+summary(subset(SSL$webpage_visits, SSL$license == "Apache"))
+sd(subset(SSL$webpage_visits, SSL$license == "Apache"))
+summary(subset(SSL$webpage_visits, SSL$license == "BSD"))
+sd(subset(SSL$webpage_visits, SSL$license == "BSD"))
+summary(subset(SSL$webpage_visits, SSL$license == "ECL"))
+sd(subset(SSL$webpage_visits, SSL$license == "ECL"))
+summary(subset(SSL$webpage_visits, SSL$license == "GPL"))
+sd(subset(SSL$webpage_visits, SSL$license == "GPL"))
+summary(subset(SSL$webpage_visits, SSL$license == "LGPL"))
+sd(subset(SSL$webpage_visits, SSL$license == "LGPL"))
+summary(subset(SSL$webpage_visits, SSL$license == "MIT"))
+sd(subset(SSL$webpage_visits, SSL$license == "MIT"))
+summary(subset(SSL$webpage_visits, SSL$license == "MPL"))
+sd(subset(SSL$webpage_visits, SSL$license == "MPL"))
+
+#year
+table(SSL$year)
+prop.table(table(SSL$year))
+
+#journal
+table(SSL$journal)
+prop.table(table(SSL$journal))
+table(subset(SSL$journal, SSL$license_type=="FOSS"))
+table(subset(SSL$journal, SSL$license_type=="Non-FOSS"))
+
+#subject
+table(SSL$main_subject)
+prop.table(table(SSL$main_subject))
+table(subset(SSL$main_subject, SSL$license_type=="FOSS"))
+table(subset(SSL$main_subject, SSL$license_type=="Non-FOSS"))
+
+```
+
+## Chi-Squared Test
+```{r XSQR}
+chisq.test(table(SSL$license, SSL$journal))
+# subtract expected from actual values
+table(SSL$license, SSL$journal) - chisq.test(table(SSL$license, SSL$journal))$expected
+
+chisq.test(table(SSL$license, SSL$main_subject))
+# subtract expected from actual values
+table(SSL$license, SSL$main_subject) - chisq.test(table(SSL$license, SSL$main_subject))$expected
+
+chisq.test(table(SSL$license_type, SSL$journal))
+# subtract expected from actual values
+table(SSL$license_type, SSL$journal) - chisq.test(table(SSL$license_type, SSL$journal))$expected
+
+chisq.test(table(SSL$license_type, SSL$main_subject))
+# subtract expected from actual values
+table(SSL$license_type, SSL$main_subject) - chisq.test(table(SSL$license_type, SSL$main_subject))$expected
+```
+
+## Linear Models
+```{r lm typ}
+#typ
+LMcit_typ <- lm(citation_count ~ license_type, data = SSL) 
+summary(LMcit_typ)
+
+LMsoc_typ <- lm(socialmedia_posts ~ license_type, data = SSL) 
+summary(LMsoc_typ)
+
+LMweb_typ <- lm(webpage_visits ~ license_type, data = SSL) 
+summary(LMweb_typ)
+
+```
+
+```{r lm lic}
+#lic
+rel_license <- relevel(as.factor(SSL$license), ref = 8)
+
+LMcit_lic <- lm(citation_count ~ rel_license, data = SSL) 
+summary(LMcit_lic)
+
+LMsoc_lic <- lm(socialmedia_posts ~ rel_license, data = SSL) 
+summary(LMsoc_lic)
+
+LMweb_lic <- lm(webpage_visits ~ rel_license, data = SSL) 
+summary(LMweb_lic)
+```
+
+
+```{r lm fitness indices }
+LMcit_soc <- lm(citation_count ~  socialmedia_posts, data = SSL) 
+summary(LMcit_soc)
+
+LMcit_web <- lm(citation_count ~  webpage_visits, data = SSL) 
+summary(LMcit_web)
+
+LMsoc_web <- lm(socialmedia_posts ~ webpage_visits, data = SSL) 
+summary(LMsoc_web)
+
+LMsoc_cit <- lm(socialmedia_posts ~citation_count, data = SSL) 
+summary(LMsoc_cit)
+
+LMweb_cit <- lm(webpage_visits ~ citation_count, data = SSL) 
+summary(LMweb_cit)
+
+LMweb_soc <- lm(webpage_visits ~ socialmedia_posts, data = SSL) 
+summary(LMweb_soc)
+```
+
+## GLM Models
+
+```{r GLM cit typ full}
+GLMcit_typ <- glmer.nb(citation_count ~ license_type + as.vector(scale(impact_factor)) + as.vector(scale(days_since_pub)) + (1|journal), data = SSL, family = nbinom1(link = 'log'))
+
+summary(GLMcit_typ)
+```
+
+```{r GLM cit lic full}
+GLMcit_lic <- glmer.nb(citation_count ~ rel_license + as.vector(scale(impact_factor)) + as.vector(scale(days_since_pub)) + (1|journal), data = SSL, family = nbinom1(link = 'log'))
+
+summary(GLMcit_lic)
+```
+
+```{r GLM soc typ full}
+GLMsoc_typ <- glmer.nb(socialmedia_posts ~ license_type + as.vector(scale(impact_factor)) + as.vector(scale(days_since_pub)) + (1|journal), data = SSL, family = nbinom1(link = 'log'))
+
+summary(GLMsoc_typ)
+```
+
+```{r GLM soc lic full}
+GLMsoc_lic <- glmer.nb(socialmedia_posts ~ rel_license + as.vector(scale(impact_factor)) + as.vector(scale(days_since_pub)) + (1|journal), data = SSL, family = nbinom1(link = 'log'))
+
+summary(GLMsoc_lic)
+```
+
+```{r GLM web typ full}
+GLMweb_typ <- glmer.nb(webpage_visits ~ license_type + as.vector(scale(impact_factor)) + as.vector(scale(days_since_pub)) + (1|journal), data = SSL, family = nbinom1(link = 'log'))
+
+summary(GLMweb_typ)
+```
+
+```{r GLM soc lic full}
+GLMweb_lic <- glmer.nb(webpage_visits ~ rel_license + as.vector(scale(impact_factor)) + as.vector(scale(days_since_pub)) + (1|journal), data = SSL, family = nbinom1(link = 'log'))
+
+summary(GLMweb_lic)
+```
+
+
+
+
+# Draw Data
+
+```{r treemap license}
+treemap(as.data.frame(table(SSL$license)),
+        index="Var1",
+        vSize="Freq",
+        type="index",
+        title="Figure 6. Proportion of Licences in the Sample")
+```
+
+```{r hist year x license}
+ggplot(SSL, aes(x=as.integer(year), group=license,fill=license)) + 
+    geom_histogram(position='dodge', binwidth=1)+
+    xlab("Year") +
+    ylab("Papers") +
+    labs(title = "Figure 7",
+         subtitle = "Licence Usage by Year") 
+```
+
+```{r hist year x type}
+ggplot(SSL, aes(x=as.integer(year), group=license_type,fill=license_type)) + 
+    geom_histogram(position='dodge', binwidth=1)+
+    xlab("Year") +
+    ylab("Papers") +
+    labs(title = "Figure 8",
+         subtitle = "Licence Type Usage by Year") 
+```
+
+```{r citcount by licence type}
+ggplot(SSL, aes(x = citation_count, fill = license_type)) +
+    geom_histogram(position = "dodge") +
+    xlim(0, 75) +
+    geom_vline(xintercept = mean(subset(SSL$citation_count, SSL$license_type == "FOSS")), linetype = "dashed",
+               color = "indianred1") +
+    geom_vline(xintercept = mean(subset(SSL$citation_count, SSL$license_type == "Non-FOSS")), linetype = "dashed",
+               color = "cyan4") +
+    xlab("Citation Count") +
+    ylab("Papers") +
+    labs(title = "Figure 9",
+         subtitle = "Citation Count by Licence Type",
+         caption = "The dashed lines represent the respective average citation counts for each group of papers.")
+```
+
+```{r soc by licence type}
+ggplot(SSL, aes(x = socialmedia_posts, fill = license_type)) +
+    geom_histogram(position = "dodge") +
+    xlim(0, 30) +
+    geom_vline(xintercept = mean(subset(SSL$socialmedia_posts, SSL$license_type == "FOSS")), linetype = "dashed",
+               color = "indianred1") +
+    geom_vline(xintercept = mean(subset(SSL$socialmedia_posts, SSL$license_type == "Non-FOSS")), linetype = "dashed",
+               color = "cyan4") +
+    xlab("Social Media Posts") +
+    ylab("Papers") +
+    labs(title = "Figure 10",
+         subtitle = "Social Media Posts by Licence Type",
+         caption = "The dashed lines represent the respective average citation counts for each group of papers.")
+```
+
+```{r web by licence type}
+ggplot(SSL, aes(x = webpage_visits, fill = license_type)) +
+    geom_histogram(position = "dodge") +
+    xlim(0, 10^4) +
+    geom_vline(xintercept = mean(subset(SSL$webpage_visits, SSL$license_type == "FOSS")), 
+               linetype = "dashed",
+               color = "indianred1") +
+    geom_vline(xintercept = mean(subset(SSL$webpage_visits, SSL$license_type == "Non-FOSS")), 
+               linetype = "dashed",
+               color = "cyan4") +
+    xlab("Webpage Visits") +
+    ylab("Papers") +
+    labs(title = "Figure 11",
+         subtitle = "Webpage Visits by Licence Type",
+         caption = "The dashed lines represent the respective average citation counts for each group of papers.")
+```
+
+```{r heat jou lic}
+DFlic_jou <- as.data.frame(prop.table(table(SSL$license, SSL$journal)))
+
+ggplot(DFlic_jou, aes(x=Var1, y=Var2, fill=Freq)) + 
+  geom_tile() +
+   xlab("License") +
+    ylab("Journal") +
+    labs(title = "Figure 12",
+         subtitle = "Frequency of License by Journal",
+         caption = "Heatmap of the Frequency of Licenses by Journal")
+```
+
+```{r heat jou lic}
+DFlic_sub <- as.data.frame(prop.table(table(SSL$license, SSL$main_subject)))
+
+ggplot(DFlic_sub, aes(x=Var1, y=Var2, fill=Freq)) + 
+    geom_tile() +
+    xlab("License") +
+    ylab("Subject") +
+    labs(title = "Figure 13",
+         subtitle = "Frequency of License by Subject",
+         caption = "////")
+```
+
+```{r LM cit lic residuals}
+ggplot(LMcit_lic, aes(x = citation_count, y = .resid, color = rel_license)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Citation Count") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Citation Count",
+         caption = "///")
+```
+
+```{r LM cit typ residuals}
+ggplot(LMcit_typ, aes(x = citation_count, y = .resid, color = license_type)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Citation Count") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Citation Count",
+         caption = "///")
+```
+
+```{r LM soc lic residuals}
+ggplot(LMsoc_lic, aes(x = socialmedia_posts, y = .resid, color = rel_license)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Social Media Posts") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Social Media Posts",
+         caption = "///")
+```
+
+```{r LM soc typ residuals}
+ggplot(LMsoc_typ, aes(x = socialmedia_posts, y = .resid, color = license_type)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Social Media Posts") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Social Media Posts",
+         caption = "///")
+```
+
+```{r LM web lic residuals}
+ggplot(LMweb_lic, aes(x = webpage_visits, y = .resid, color = rel_license)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Webpage Visits") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Webpage Visits",
+         caption = "///")
+```
+
+```{r LM web typ residuals}
+ggplot(LMweb_typ, aes(x = webpage_visits, y = .resid, color = license_type)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Webpage Visits") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Webpage Visits",
+         caption = "///")
+```
+
+```{r lm cit soc}
+ggplot(SSL, aes(x = citation_count, y = socialmedia_posts, color = license_type)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Citation Count") +
+    ylab("Social Media Posts")  + 
+    labs(title = "Figure ///",
+         subtitle = "Citation Count as a Function of Social Media Posts",
+         caption = "///")
+```
+
+
+
+```{r LM cit typ 4 residuals}
+ggplot(LMcit_typ4, aes(x = citation_count, y = .resid, color = license_type)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Citation Count") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure LM",
+         subtitle = "Residuals as a Function of Citation Count",
+         caption = "///")
+```
+
+```{r LM cit lic4 residuals}
+ggplot(LMcit_lic4, aes(x = citation_count, y = .resid, color = license)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Citation Count") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Citation Count",
+         caption = "///")
+```
+
+```{r LM soc typ 4 residuals}
+ggplot(LMsoc_typ4, aes(x = citation_count, y = .resid, color = license_type)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Citation Count") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Citation Count",
+         caption = "///")
+```
+
+```{r LM soc lic 4 residuals}
+ggplot(LMsoc_lic4, aes(x = citation_count, y = .resid, color = license)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Citation Count") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Citation Count",
+         caption = "///")
+```
+
+```{r LM web typ 4 residuals}
+ggplot(LMweb_typ4, aes(x = citation_count, y = .resid, color = license_type)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Citation Count") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure ///",
+         subtitle = "Residuals as a Function of Citation Count",
+         caption = "///")
+```
+
+
+```{r GLM  cit type residuals}
+GLMcit_typRES <- residuals(GLMcit_typ, "pearson", scaled = TRUE)
+
+ggplot(SSL , aes(x = citation_count, y = GLMcit_typRES, color = license_type)) + 
+    geom_point(size = 2) +
+    geom_smooth(method="lm", 
+                color = "black", se = FALSE, linetype = "dashed") +
+    xlab("Citation Count") +
+    ylab("Residual Value")  + 
+    labs(title = "Figure GLM",
+         subtitle = "Residuals as a Function of Citation Count",
+         caption = "GLM")
+```
+
+
+
+
+
+
+
+
