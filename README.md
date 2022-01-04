@@ -3,8 +3,7 @@ Investigating the impact of software licensing on the dissemination of peer-revi
 
 
 ## ScientificSoftwareLicensing.rmd 
-## 4 sections
-
+Has four sections:
 ### 1) Get Data
 
 It downloads publication data from articles in PLOS (Public Library of Science, the first peer-reviewed Open-Science journal) that contain FOSS software license names (bsd, mit, ecl, Apache, mpl, lgpl, gpl) and as many randomly selected articles for the control group. 
